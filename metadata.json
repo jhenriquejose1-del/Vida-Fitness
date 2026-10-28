@@ -1,0 +1,6 @@
+{
+  "name": "FitEvolution AI",
+  "description": "Aplicativo completo de acompanhamento de treinos com geração em lote, rastreamento individual de séries, nutrição e análise de macronutrientes com IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

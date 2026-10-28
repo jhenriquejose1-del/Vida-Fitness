@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isDataOwner() {
+      return isSignedIn() && (
+        (resource == null && request.resource.data.userId == request.auth.uid) ||
+        (resource != null && resource.data.userId == request.auth.uid)
+      );
+    }
+
+    // Connection test document
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Workout Templates
+    match /workoutTemplates/{templateId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Exercises
+    match /exercises/{exerciseId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Workout Schedules
+    match /workoutSchedules/{scheduleId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Workout Sessions
+    match /workoutSessions/{sessionId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Exercise Sets
+    match /exerciseSets/{setId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Nutrition Entries
+    match /nutritionEntries/{entryId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Food Items
+    match /foodItems/{foodId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Recipes
+    match /recipes/{recipeId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // Body Measurements
+    match /bodyMeasurements/{measurementId} {
+      allow read, write: if isDataOwner();
+    }
+
+    // User Settings
+    match /userSettings/{settingsId} {
+      allow read, write: if isDataOwner();
+    }
+  }
+}
