@@ -33,7 +33,7 @@
         "name": { "type": "string" },
         "muscleGroup": { "type": "string" },
         "description": { "type": "string" },
-        "exerciseIds": { "type": "array" },
+        "exercises": { "type": "array" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },
@@ -197,14 +197,14 @@
       "description": "Body weight and progress tracking entries over time",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "date": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 20, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
         "weightKg": { "type": "number" },
-        "notes": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "notes": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["userId", "date", "weightKg"]
+      "required": ["id", "userId", "date", "weightKg"]
     },
     "UserSettings": {
       "title": "UserSettings",

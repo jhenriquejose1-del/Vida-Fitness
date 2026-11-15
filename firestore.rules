@@ -1,84 +1,467 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny catch-all
+    // Global default-deny safety net
     match /{document=**} {
       allow read, write: if false;
     }
 
+    // --- Global Primitives ---
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    function isDataOwner() {
-      return isSignedIn() && (
-        (resource == null && request.resource.data.userId == request.auth.uid) ||
-        (resource != null && resource.data.userId == request.auth.uid)
-      );
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Connection test document
+    function isValidDateStr(d) {
+      return d is string && d.size() <= 20 && d.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isOptionalString(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isOptionalNumber(data, key, minVal, maxVal) {
+      return !(key in data) || (data[key] is number && data[key] >= minVal && data[key] <= maxVal);
+    }
+
+    function isOptionalBool(data, key) {
+      return !(key in data) || data[key] is bool;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data, uid) {
+      return data.keys().hasAll(['userId', 'name', 'email']) &&
+             data.keys().hasOnly([
+               'userId', 'name', 'email', 'photoURL', 'birthDate',
+               'height', 'currentWeight', 'targetWeight', 'goal',
+               'experienceLevel', 'workoutDaysAvailable',
+               'foodPreferences', 'physicalRestrictions',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId == uid &&
+             data.name is string && data.name.size() <= 120 &&
+             data.email is string && data.email.size() <= 200 &&
+             isOptionalString(data, 'photoURL', 500) &&
+             isOptionalString(data, 'birthDate', 20) &&
+             isOptionalNumber(data, 'height', 0, 300) &&
+             isOptionalNumber(data, 'currentWeight', 0, 500) &&
+             isOptionalNumber(data, 'targetWeight', 0, 500) &&
+             (!('goal' in data) || data.goal in ['hypertrophy', 'weight_loss', 'maintenance', 'conditioning']) &&
+             (!('experienceLevel' in data) || data.experienceLevel in ['beginner', 'intermediate', 'advanced']) &&
+             isOptionalNumber(data, 'workoutDaysAvailable', 1, 7) &&
+             isOptionalString(data, 'foodPreferences', 500) &&
+             isOptionalString(data, 'physicalRestrictions', 500) &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    function isValidWorkoutTemplate(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'muscleGroup', 'exercises']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'name', 'muscleGroup', 'description',
+               'exercises', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() <= 150 &&
+             data.muscleGroup is string && data.muscleGroup.size() <= 100 &&
+             isOptionalString(data, 'description', 500) &&
+             data.exercises is list && data.exercises.size() <= 100 &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    function isValidExercise(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'muscleGroup']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'name', 'muscleGroup', 'equipment',
+               'targetSets', 'targetReps', 'targetWeightKg', 'restTimeSeconds',
+               'notes', 'videoUrl', 'isCustom', 'workoutTemplateId',
+               'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() <= 150 &&
+             data.muscleGroup is string && data.muscleGroup.size() <= 80 &&
+             isOptionalString(data, 'equipment', 150) &&
+             isOptionalNumber(data, 'targetSets', 0, 100) &&
+             isOptionalNumber(data, 'targetReps', 0, 1000) &&
+             isOptionalNumber(data, 'targetWeightKg', 0, 2000) &&
+             isOptionalNumber(data, 'restTimeSeconds', 0, 3600) &&
+             isOptionalString(data, 'notes', 500) &&
+             isOptionalString(data, 'videoUrl', 500) &&
+             isOptionalBool(data, 'isCustom') &&
+             isOptionalString(data, 'workoutTemplateId', 128) &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    function isValidWorkoutSchedule(data) {
+      return data.keys().hasAll(['id', 'userId', 'date', 'workoutName', 'muscleGroup', 'status']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'date', 'workoutTemplateId', 'workoutName',
+               'muscleGroup', 'status', 'cycleBatchId', 'completedAt',
+               'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             isValidDateStr(data.date) &&
+             isOptionalString(data, 'workoutTemplateId', 128) &&
+             data.workoutName is string && data.workoutName.size() <= 150 &&
+             data.muscleGroup is string && data.muscleGroup.size() <= 100 &&
+             data.status in ['scheduled', 'completed', 'partial', 'rest', 'skipped'] &&
+             isOptionalString(data, 'cycleBatchId', 128) &&
+             isOptionalString(data, 'completedAt', 64) &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    function isValidWorkoutSession(data) {
+      return data.keys().hasAll(['id', 'userId', 'workoutName', 'date', 'startedAt', 'status']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'scheduleId', 'workoutTemplateId', 'workoutName',
+               'date', 'startedAt', 'endedAt', 'durationSeconds',
+               'totalVolumeKg', 'totalSets', 'status', 'notes', 'sets',
+               'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             isOptionalString(data, 'scheduleId', 128) &&
+             isOptionalString(data, 'workoutTemplateId', 128) &&
+             data.workoutName is string && data.workoutName.size() <= 150 &&
+             isValidDateStr(data.date) &&
+             data.startedAt is string && data.startedAt.size() <= 64 &&
+             isOptionalString(data, 'endedAt', 64) &&
+             isOptionalNumber(data, 'durationSeconds', 0, 86400) &&
+             isOptionalNumber(data, 'totalVolumeKg', 0, 1000000) &&
+             isOptionalNumber(data, 'totalSets', 0, 500) &&
+             data.status in ['completed', 'in_progress', 'cancelled'] &&
+             isOptionalString(data, 'notes', 500) &&
+             (!('sets' in data) || (data.sets is list && data.sets.size() <= 300)) &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    function isValidExerciseSet(data) {
+      return data.keys().hasAll(['id', 'userId', 'sessionId', 'exerciseName', 'setNumber', 'actualReps', 'actualWeightKg']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'sessionId', 'exerciseId', 'exerciseName',
+               'setNumber', 'targetReps', 'actualReps', 'targetWeightKg',
+               'actualWeightKg', 'completed', 'restTimeSeconds',
+               'completedAt', 'createdAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             data.sessionId is string && data.sessionId.size() <= 128 &&
+             isOptionalString(data, 'exerciseId', 128) &&
+             data.exerciseName is string && data.exerciseName.size() <= 150 &&
+             data.setNumber is number && data.setNumber >= 1 && data.setNumber <= 100 &&
+             isOptionalNumber(data, 'targetReps', 0, 1000) &&
+             data.actualReps is number && data.actualReps >= 0 && data.actualReps <= 1000 &&
+             isOptionalNumber(data, 'targetWeightKg', 0, 2000) &&
+             data.actualWeightKg is number && data.actualWeightKg >= 0 && data.actualWeightKg <= 2000 &&
+             isOptionalBool(data, 'completed') &&
+             isOptionalNumber(data, 'restTimeSeconds', 0, 3600) &&
+             isOptionalString(data, 'completedAt', 64) &&
+             isOptionalString(data, 'createdAt', 64);
+    }
+
+    function isValidNutritionEntry(data) {
+      return data.keys().hasAll(['id', 'userId', 'date', 'mealType', 'name', 'calories', 'protein', 'carbs', 'fats']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'date', 'mealType', 'name', 'quantity', 'unit',
+               'calories', 'protein', 'carbs', 'fats', 'fiber',
+               'source', 'verified', 'sourceUrl', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             isValidDateStr(data.date) &&
+             data.mealType in ['breakfast', 'lunch', 'snack', 'dinner', 'custom'] &&
+             data.name is string && data.name.size() <= 200 &&
+             isOptionalNumber(data, 'quantity', 0, 50000) &&
+             isOptionalString(data, 'unit', 40) &&
+             data.calories is number && data.calories >= 0 && data.calories <= 50000 &&
+             data.protein is number && data.protein >= 0 && data.protein <= 5000 &&
+             data.carbs is number && data.carbs >= 0 && data.carbs <= 5000 &&
+             data.fats is number && data.fats >= 0 && data.fats <= 5000 &&
+             isOptionalNumber(data, 'fiber', 0, 5000) &&
+             isOptionalString(data, 'source', 150) &&
+             isOptionalBool(data, 'verified') &&
+             isOptionalString(data, 'sourceUrl', 500) &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    function isValidFoodItem(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'caloriesPer100', 'proteinPer100', 'carbsPer100', 'fatsPer100']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'name', 'defaultServing', 'unit',
+               'caloriesPer100', 'proteinPer100', 'carbsPer100', 'fatsPer100',
+               'fiberPer100', 'source', 'isFavorite', 'createdAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() <= 200 &&
+             isOptionalNumber(data, 'defaultServing', 0, 10000) &&
+             isOptionalString(data, 'unit', 40) &&
+             data.caloriesPer100 is number && data.caloriesPer100 >= 0 && data.caloriesPer100 <= 10000 &&
+             data.proteinPer100 is number && data.proteinPer100 >= 0 && data.proteinPer100 <= 1000 &&
+             data.carbsPer100 is number && data.carbsPer100 >= 0 && data.carbsPer100 <= 1000 &&
+             data.fatsPer100 is number && data.fatsPer100 >= 0 && data.fatsPer100 <= 1000 &&
+             isOptionalNumber(data, 'fiberPer100', 0, 1000) &&
+             isOptionalString(data, 'source', 150) &&
+             isOptionalBool(data, 'isFavorite') &&
+             isOptionalString(data, 'createdAt', 64);
+    }
+
+    function isValidRecipe(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'portions', 'totalCalories']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'name', 'portions', 'ingredients',
+               'totalCalories', 'totalProtein', 'totalCarbs', 'totalFats',
+               'notes', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() <= 200 &&
+             data.portions is number && data.portions > 0 && data.portions <= 200 &&
+             (!('ingredients' in data) || (data.ingredients is list && data.ingredients.size() <= 100)) &&
+             data.totalCalories is number && data.totalCalories >= 0 && data.totalCalories <= 100000 &&
+             isOptionalNumber(data, 'totalProtein', 0, 10000) &&
+             isOptionalNumber(data, 'totalCarbs', 0, 10000) &&
+             isOptionalNumber(data, 'totalFats', 0, 10000) &&
+             isOptionalString(data, 'notes', 500) &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    function isValidBodyMeasurement(data) {
+      return data.keys().hasAll(['id', 'userId', 'date', 'weightKg']) &&
+             data.keys().hasOnly(['id', 'userId', 'date', 'weightKg', 'notes', 'createdAt']) &&
+             isValidId(data.id) &&
+             data.userId == request.auth.uid &&
+             isValidDateStr(data.date) &&
+             data.weightKg is number && data.weightKg >= 20 && data.weightKg <= 350 &&
+             isOptionalString(data, 'notes', 200) &&
+             isOptionalString(data, 'createdAt', 64);
+    }
+
+    function isValidUserSettings(data) {
+      return data.keys().hasAll(['userId']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'calorieGoal', 'proteinGoal', 'carbsGoal',
+               'fatsGoal', 'waterGoalMl', 'waterConsumedMl', 'autoRestTimer',
+               'defaultRestSeconds', 'timerSound', 'vibrationEnabled',
+               'soundMuted', 'notificationsEnabled', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId == request.auth.uid &&
+             isOptionalString(data, 'id', 128) &&
+             isOptionalNumber(data, 'calorieGoal', 0, 20000) &&
+             isOptionalNumber(data, 'proteinGoal', 0, 2000) &&
+             isOptionalNumber(data, 'carbsGoal', 0, 2000) &&
+             isOptionalNumber(data, 'fatsGoal', 0, 2000) &&
+             isOptionalNumber(data, 'waterGoalMl', 0, 20000) &&
+             isOptionalNumber(data, 'waterConsumedMl', 0, 20000) &&
+             isOptionalBool(data, 'autoRestTimer') &&
+             isOptionalNumber(data, 'defaultRestSeconds', 0, 3600) &&
+             (!('timerSound' in data) || data.timerSound in ['beep', 'bell', 'digital', 'chime']) &&
+             isOptionalBool(data, 'vibrationEnabled') &&
+             isOptionalBool(data, 'soundMuted') &&
+             isOptionalBool(data, 'notificationsEnabled') &&
+             isOptionalString(data, 'createdAt', 64) &&
+             isOptionalString(data, 'updatedAt', 64);
+    }
+
+    // --- Collection Match Rules ---
+
+    // Connection test document (read-only ping)
     match /test/{docId} {
-      allow read: if true;
+      allow get: if docId == 'connection';
     }
 
-    // User profiles
+    // User profiles (PII: strict owner-only access)
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow create: if isVerified() && isValidId(userId) && request.auth.uid == userId &&
+                       isValidUserProfile(incoming(), userId);
+      allow update: if isVerified() && isValidId(userId) && request.auth.uid == userId &&
+                       isValidUserProfile(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt);
+      allow delete: if isVerified() && isValidId(userId) && request.auth.uid == userId;
     }
 
     // Workout Templates
     match /workoutTemplates/{templateId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(templateId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(templateId) && isValidWorkoutTemplate(incoming()) && incoming().id == templateId;
+      allow update: if isVerified() && isValidId(templateId) && existing().userId == request.auth.uid &&
+                       isValidWorkoutTemplate(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'muscleGroup', 'description', 'exercises', 'updatedAt']);
+      allow delete: if isVerified() && isValidId(templateId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // Exercises
     match /exercises/{exerciseId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(exerciseId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(exerciseId) && isValidExercise(incoming()) && incoming().id == exerciseId;
+      allow update: if isVerified() && isValidId(exerciseId) && existing().userId == request.auth.uid &&
+                       isValidExercise(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'name', 'muscleGroup', 'equipment', 'targetSets', 'targetReps',
+                         'targetWeightKg', 'restTimeSeconds', 'notes', 'videoUrl',
+                         'isCustom', 'workoutTemplateId', 'updatedAt'
+                       ]);
+      allow delete: if isVerified() && isValidId(exerciseId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // Workout Schedules
     match /workoutSchedules/{scheduleId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(scheduleId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(scheduleId) && isValidWorkoutSchedule(incoming()) && incoming().id == scheduleId;
+      allow update: if isVerified() && isValidId(scheduleId) && existing().userId == request.auth.uid &&
+                       isValidWorkoutSchedule(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'date', 'workoutTemplateId', 'workoutName', 'muscleGroup',
+                         'status', 'completedAt', 'updatedAt'
+                       ]);
+      allow delete: if isVerified() && isValidId(scheduleId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // Workout Sessions
     match /workoutSessions/{sessionId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(sessionId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(sessionId) && isValidWorkoutSession(incoming()) && incoming().id == sessionId;
+      allow update: if isVerified() && isValidId(sessionId) && existing().userId == request.auth.uid &&
+                       isValidWorkoutSession(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       existing().status != 'completed' &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'endedAt', 'durationSeconds', 'totalVolumeKg', 'totalSets',
+                         'status', 'notes', 'sets', 'updatedAt'
+                       ]);
+      allow delete: if isVerified() && isValidId(sessionId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // Exercise Sets
     match /exerciseSets/{setId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(setId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(setId) && isValidExerciseSet(incoming()) && incoming().id == setId;
+      allow update: if isVerified() && isValidId(setId) && existing().userId == request.auth.uid &&
+                       isValidExerciseSet(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'actualReps', 'actualWeightKg', 'completed', 'restTimeSeconds', 'completedAt'
+                       ]);
+      allow delete: if isVerified() && isValidId(setId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // Nutrition Entries
     match /nutritionEntries/{entryId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(entryId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(entryId) && isValidNutritionEntry(incoming()) && incoming().id == entryId;
+      allow update: if isVerified() && isValidId(entryId) && existing().userId == request.auth.uid &&
+                       isValidNutritionEntry(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'date', 'mealType', 'name', 'quantity', 'unit',
+                         'calories', 'protein', 'carbs', 'fats', 'fiber', 'updatedAt'
+                       ]);
+      allow delete: if isVerified() && isValidId(entryId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // Food Items
     match /foodItems/{foodId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(foodId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(foodId) && isValidFoodItem(incoming()) && incoming().id == foodId;
+      allow update: if isVerified() && isValidId(foodId) && existing().userId == request.auth.uid &&
+                       isValidFoodItem(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'name', 'defaultServing', 'unit', 'caloriesPer100',
+                         'proteinPer100', 'carbsPer100', 'fatsPer100', 'fiberPer100', 'isFavorite'
+                       ]);
+      allow delete: if isVerified() && isValidId(foodId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // Recipes
     match /recipes/{recipeId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(recipeId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(recipeId) && isValidRecipe(incoming()) && incoming().id == recipeId;
+      allow update: if isVerified() && isValidId(recipeId) && existing().userId == request.auth.uid &&
+                       isValidRecipe(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'name', 'portions', 'ingredients', 'totalCalories',
+                         'totalProtein', 'totalCarbs', 'totalFats', 'notes', 'updatedAt'
+                       ]);
+      allow delete: if isVerified() && isValidId(recipeId) && resource != null && existing().userId == request.auth.uid;
     }
 
-    // Body Measurements
+    // Body Measurements (Body Metrics Tracker)
     match /bodyMeasurements/{measurementId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(measurementId) && resource != null && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(measurementId) && isValidBodyMeasurement(incoming()) && incoming().id == measurementId;
+      allow update: if isVerified() && isValidId(measurementId) && existing().userId == request.auth.uid &&
+                       isValidBodyMeasurement(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().id == existing().id &&
+                       (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['date', 'weightKg', 'notes']);
+      allow delete: if isVerified() && isValidId(measurementId) && resource != null && existing().userId == request.auth.uid;
     }
 
     // User Settings
     match /userSettings/{settingsId} {
-      allow read, write: if isDataOwner();
+      allow get: if isSignedIn() && isValidId(settingsId) && settingsId == request.auth.uid && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerified() && isValidId(settingsId) && settingsId == request.auth.uid && isValidUserSettings(incoming());
+      allow update: if isVerified() && isValidId(settingsId) && settingsId == request.auth.uid &&
+                       existing().userId == request.auth.uid &&
+                       isValidUserSettings(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'calorieGoal', 'proteinGoal', 'carbsGoal', 'fatsGoal',
+                         'waterGoalMl', 'waterConsumedMl', 'autoRestTimer',
+                         'defaultRestSeconds', 'timerSound', 'vibrationEnabled',
+                         'soundMuted', 'notificationsEnabled', 'updatedAt'
+                       ]);
+      allow delete: if isVerified() && isValidId(settingsId) && settingsId == request.auth.uid;
     }
   }
 }

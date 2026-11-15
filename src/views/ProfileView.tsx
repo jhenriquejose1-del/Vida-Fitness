@@ -1,40 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { playTimerSound, TimerSoundType } from '../services/audioService';
+import { BodyMetricsTracker } from '../components/BodyMetricsTracker';
 import { UserGoal, ExperienceLevel } from '../types';
 import {
   User,
-  Scale,
   Target,
-  Settings,
   Bell,
-  Volume2,
   Smartphone,
   Save,
-  Plus,
-  Trash2,
   FileText,
-  TrendingUp,
-  Award,
 } from 'lucide-react';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from 'recharts';
 
 interface ProfileViewProps {
   onOpenExport: () => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenExport }) => {
-  const { profile, updateProfile, isGuest } = useAuth();
-  const { settings, updateSettings, measurements, addMeasurement, deleteMeasurement } = useData();
+  const { profile, updateProfile } = useAuth();
+  const { settings, updateSettings } = useData();
 
   // Profile form state
   const [name, setName] = useState(profile?.name || '');
@@ -58,10 +43,34 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenExport }) => {
   const [timerSound, setTimerSound] = useState<TimerSoundType>(settings.timerSound || 'beep');
   const [vibrationEnabled, setVibrationEnabled] = useState(settings.vibrationEnabled);
 
-  // New weight entry modal/field
-  const [newWeightInput, setNewWeightInput] = useState('');
-  const [newWeightNotes, setNewWeightNotes] = useState('');
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  // Sync form state when async profile/settings load from Firestore
+  useEffect(() => {
+    if (profile) {
+      setName(profile.name || '');
+      if (profile.height !== undefined) setHeight(profile.height);
+      if (profile.currentWeight !== undefined) setCurrentWeight(profile.currentWeight);
+      if (profile.targetWeight !== undefined) setTargetWeight(profile.targetWeight);
+      if (profile.goal) setGoal(profile.goal);
+      if (profile.experienceLevel) setExperienceLevel(profile.experienceLevel);
+      if (profile.workoutDaysAvailable !== undefined) setWorkoutDays(profile.workoutDaysAvailable);
+      if (profile.foodPreferences !== undefined) setFoodPreferences(profile.foodPreferences);
+      if (profile.physicalRestrictions !== undefined) setPhysicalRestrictions(profile.physicalRestrictions);
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    setCalorieGoal(settings.calorieGoal || 2200);
+    setProteinGoal(settings.proteinGoal || 160);
+    setCarbsGoal(settings.carbsGoal || 220);
+    setFatsGoal(settings.fatsGoal || 65);
+    setWaterGoalMl(settings.waterGoalMl || 3000);
+    setDefaultRestSeconds(settings.defaultRestSeconds || 60);
+    setAutoRestTimer(settings.autoRestTimer);
+    setTimerSound(settings.timerSound || 'beep');
+    setVibrationEnabled(settings.vibrationEnabled);
+  }, [settings]);
 
   const handleSaveProfile = async () => {
     await updateProfile({
@@ -92,25 +101,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenExport }) => {
     setTimeout(() => setSavedSuccess(false), 2500);
   };
 
-  const handleAddNewWeight = async () => {
-    const val = parseFloat(newWeightInput);
-    if (!val || val <= 0) return;
-    await addMeasurement(val, undefined, newWeightNotes);
-    setCurrentWeight(val);
-    await updateProfile({ currentWeight: val });
-    setNewWeightInput('');
-    setNewWeightNotes('');
+  const handleWeightLogged = async (newWeight: number) => {
+    setCurrentWeight(newWeight);
+    await updateProfile({ currentWeight: newWeight });
   };
 
   const testAudio = (snd: TimerSoundType) => {
     setTimerSound(snd);
     playTimerSound(snd, false);
   };
-
-  const weightChartData = measurements.map((m) => ({
-    date: m.date.substring(5), // MM-DD
-    peso: m.weightKg,
-  }));
 
   return (
     <div className="space-y-6 animate-fadeIn pb-16">
@@ -151,62 +150,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenExport }) => {
         </div>
       )}
 
-      {/* WEIGHT EVOLUTION & MEASUREMENT SECTION */}
-      <div className="rounded-3xl bg-zinc-900 border border-zinc-800 p-6 shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-              <Scale className="w-5 h-5 text-emerald-400" />
-              Evolução do Peso Corporal
-            </h3>
-            <p className="text-xs text-zinc-400">
-              Atual: <strong className="text-white">{currentWeight} kg</strong> • Meta:{' '}
-              <strong className="text-emerald-400">{targetWeight} kg</strong>
-            </p>
-          </div>
-
-          {/* Quick new measurement input */}
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              step="0.1"
-              placeholder="Novo peso (kg)"
-              value={newWeightInput}
-              onChange={(e) => setNewWeightInput(e.target.value)}
-              className="w-32 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white"
-            />
-            <button
-              onClick={handleAddNewWeight}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-500 text-black font-bold text-xs"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Registrar
-            </button>
-          </div>
-        </div>
-
-        {/* Weight Evolution Line Chart */}
-        <div className="h-56 w-full pt-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={weightChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="date" stroke="#71717a" fontSize={11} />
-              <YAxis stroke="#71717a" fontSize={11} domain={['dataMin - 2', 'dataMax + 2']} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '12px', fontSize: '12px' }}
-              />
-              <Line
-                type="monotone"
-                dataKey="peso"
-                name="Peso (kg)"
-                stroke="#10b981"
-                strokeWidth={3}
-                dot={{ fill: '#10b981', r: 5 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      {/* BODY METRICS TRACKER */}
+      <BodyMetricsTracker
+        heightCm={Number(height)}
+        currentWeight={Number(currentWeight)}
+        targetWeight={Number(targetWeight)}
+        onWeightLogged={handleWeightLogged}
+      />
 
       {/* USER PERSONAL INFO */}
       <div className="rounded-3xl bg-zinc-900 border border-zinc-800 p-6 shadow-xl space-y-4">

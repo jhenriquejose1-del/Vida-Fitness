@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, googleProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged, FirebaseUser, db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { auth, googleProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged, FirebaseUser, db, handleFirestoreError, OperationType, testConnection } from '../lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { UserProfile } from '../types';
 
@@ -49,6 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   useEffect(() => {
+    testConnection();
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {

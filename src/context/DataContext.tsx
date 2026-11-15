@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, query, where, getDocs, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, deleteDoc, writeBatch, onSnapshot } from 'firebase/firestore';
 import {
   WorkoutTemplate,
   WorkoutSchedule,
@@ -155,7 +155,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setNutritionEntries(fbNutrition);
             setFoods(fbFoods.length > 0 ? fbFoods : INITIAL_FOOD_DATABASE.map(f => ({ ...f, userId: user.uid })));
             setRecipes(fbRecipes);
-            setMeasurements(fbMeasurements.length > 0 ? fbMeasurements : INITIAL_MEASUREMENTS.map(m => ({ ...m, userId: user.uid })));
+            setMeasurements(
+              [...fbMeasurements].sort((a, b) => a.date.localeCompare(b.date))
+            );
             if (fbSettingsDocs.length > 0) {
               setSettings(fbSettingsDocs[0]);
             } else {
@@ -199,8 +201,34 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     loadData();
 
+    // Real-time listener for Body Measurements when authenticated
+    let unsubscribeMeasurements: (() => void) | undefined;
+    if (user && !isGuest) {
+      const measQuery = query(
+        collection(db, 'bodyMeasurements'),
+        where('userId', '==', user.uid)
+      );
+      unsubscribeMeasurements = onSnapshot(
+        measQuery,
+        (snapshot) => {
+          if (!isMounted) return;
+          const items = snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }) as BodyMeasurement)
+            .sort((a, b) => {
+              const cmp = a.date.localeCompare(b.date);
+              return cmp !== 0 ? cmp : (a.createdAt || '').localeCompare(b.createdAt || '');
+            });
+          setMeasurements(items);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'bodyMeasurements');
+        }
+      );
+    }
+
     return () => {
       isMounted = false;
+      if (unsubscribeMeasurements) unsubscribeMeasurements();
     };
   }, [user, isGuest]);
 
@@ -730,7 +758,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (user && !isGuest) {
       try {
-        await setDoc(doc(db, 'userSettings', user.uid), { waterConsumedMl: newAmount }, { merge: true });
+        await setDoc(
+          doc(db, 'userSettings', user.uid),
+          { userId: user.uid, waterConsumedMl: newAmount, updatedAt: new Date().toISOString() },
+          { merge: true }
+        );
       } catch (err) {
         console.warn('Erro ao atualizar água no Firestore:', err);
       }
@@ -741,7 +773,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSettings((prev) => ({ ...prev, ...newSettings }));
     if (user && !isGuest) {
       try {
-        await setDoc(doc(db, 'userSettings', user.uid), newSettings, { merge: true });
+        await setDoc(
+          doc(db, 'userSettings', user.uid),
+          { ...newSettings, userId: user.uid, updatedAt: new Date().toISOString() },
+          { merge: true }
+        );
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `userSettings/${user.uid}`);
       }
@@ -754,16 +790,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addMeasurement = async (weightKg: number, date?: string, notes?: string): Promise<void> => {
     const dateStr = date || new Date().toISOString().split('T')[0];
     const id = `meas_${Date.now()}`;
+    const trimmedNotes = notes?.trim();
     const newMeas: BodyMeasurement = {
       id,
       userId: currentUserId,
       date: dateStr,
       weightKg,
-      notes,
+      ...(trimmedNotes ? { notes: trimmedNotes } : {}),
       createdAt: new Date().toISOString(),
     };
 
-    setMeasurements((prev) => [...prev, newMeas].sort((a, b) => a.date.localeCompare(b.date)));
+    setMeasurements((prev) =>
+      [...prev, newMeas].sort((a, b) => {
+        const cmp = a.date.localeCompare(b.date);
+        return cmp !== 0 ? cmp : (a.createdAt || '').localeCompare(b.createdAt || '');
+      })
+    );
 
     if (user && !isGuest) {
       try {
